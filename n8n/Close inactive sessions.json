@@ -1,0 +1,102 @@
+{
+  "name": "Close inactive sessions",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -384,
+        0
+      ],
+      "id": "bcd1a3b6-3e0e-40e5-9373-7c1d2fd7d30f",
+      "name": "CloseInactiveSessions"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE sessions\nSET status = 'closed', last_activity_at = NOW()\nWHERE last_activity_at < NOW() - INTERVAL '24 HOURS'\n  AND status = 'active';\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -176,
+        0
+      ],
+      "id": "8c8e67cf-718b-4e55-ad59-9090f7ef3a62",
+      "name": "CloseOldSessions",
+      "credentials": {
+        "postgres": {
+          "id": "7oRoQP7HlwXMfH8M",
+          "name": "Postgres account 4"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO chat_metrics (session_id, latency_ms, chunk_count, confidence, created_at)\nSELECT \n    id AS session_id,\n    EXTRACT(EPOCH FROM (last_activity_at - created_at)) * 1000 AS latency_ms, -- in milliseconds\n    0 AS chunk_count,\n    0 AS confidence,\n    NOW() AS created_at\nFROM sessions\nWHERE status = 'active'\n  AND last_activity_at < NOW() - INTERVAL '24 HOURS';\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        32,
+        0
+      ],
+      "id": "4a1409b6-d55f-40a9-ab57-e3bc462c3b8a",
+      "name": "Execute a SQL query1",
+      "credentials": {
+        "postgres": {
+          "id": "7oRoQP7HlwXMfH8M",
+          "name": "Postgres account 4"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "CloseInactiveSessions": {
+      "main": [
+        [
+          {
+            "node": "CloseOldSessions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CloseOldSessions": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "0fc3c9fe-899d-4bfb-8362-f3c5f7954218",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "d1643c658e20e85319abf1d5d7ee7472221f231bd544998e713871178ff90d52"
+  },
+  "id": "8hvP6cBQmEXJuPv9",
+  "tags": []
+}

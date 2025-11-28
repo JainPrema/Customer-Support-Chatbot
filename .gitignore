@@ -1,0 +1,15 @@
+# Docker generated data
+db_data/
+ollama/
+n8n/.n8n/
+
+# Node
+node_modules/
+
+# Secrets
+.env
+.env.local
+
+# Logs
+*.log
+

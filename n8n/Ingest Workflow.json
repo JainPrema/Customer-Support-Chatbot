@@ -1,0 +1,556 @@
+{
+  "name": "Ingest Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "/ingest/upload",
+        "responseMode": "lastNode",
+        "responseData": "allEntries",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -944,
+        -64
+      ],
+      "id": "10662e5d-775f-4103-8a08-b8e3bd3c55c5",
+      "name": "Webhook",
+      "webhookId": "1a1bb2b3-7a0a-4df2-92dc-511b3484c65f",
+      "alwaysOutputData": false,
+      "executeOnce": false
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Function node (Chunker)\n\n// Extract text from webhook payload (fix for \"content\" field)\nlet text = $input.first().json.body.content;\n\nif (typeof text !== \"string\" || text.trim() === \"\") {\n  throw new Error(\"No text provided or text is not a string\");\n}\n\n// --- Chunk configuration ---\nconst chunkChars = 2500;\nconst overlapChars = 300;\n\nfunction chunkText(t) {\n  const chunks = [];\n  let i = 0;\n  while (i < t.length) {\n    const end = i + chunkChars;\n    const chunk = t.slice(i, end);\n    chunks.push(chunk);\n    i = end - overlapChars;\n    if (i < 0) i = 0;\n  }\n  return chunks;\n}\n\nconst chunks = chunkText(text);\n\n// --- Output items ---\nconst out = [];\n\n// Add document metadata as the first item\nout.push({\n  json: {\n    doc: {\n      title: $input.first().json.body.file_name || \"upload-\" + Date.now(),\n      source: \"upload\"\n    }\n  }\n});\n\n// Add all chunks\nfor (let i = 0; i < chunks.length; i++) {\n  out.push({\n    json: {\n      chunk_text: chunks[i],\n      chunk_index: i,\n      file_name: $input.first().json.body.file_name\n    }\n  });\n}\n\nreturn out;\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -752,
+        -64
+      ],
+      "id": "313a2806-6d4e-41b3-92da-f4579c4949a9",
+      "name": "Chunker"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ollama:11434/api/embed",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"nomic-embed-text:latest\",\n  \"input\": {{ JSON.stringify($json.chunk_text) }}\n}\n\n",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -368,
+        16
+      ],
+      "id": "dec672f0-78ce-4562-85eb-6b4f988b623f",
+      "name": "Embed"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Keep only the items that have 'chunk_text'\nreturn items.filter(item => item.json.chunk_text);\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -528,
+        16
+      ],
+      "id": "131b8559-fcc7-4e5e-8cb3-3fc6f389a01b",
+      "name": "FilterChunks"
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Function node: FilterDocMeta\n\n// Get all items from Chunker output\nconst itemsWithDoc = items.filter(item => item.json.doc);\n\n// If nothing found, raise an error\nif (itemsWithDoc.length === 0) {\n  throw new Error(\"No document metadata found in input\");\n}\n\n// Only keep the doc metadata (should be one item)\nreturn itemsWithDoc;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -560,
+        -208
+      ],
+      "id": "702bf044-cb3e-49bd-b16d-d559704b2c34",
+      "name": "FilterDocMeta"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Input: $json.embeddings[0] should be an array of numbers\nconst embArray = $json.embeddings?.[0];\nconst chunk_text = $json.chunk_text;\nconst chunk_index = $json.chunk_index;\n\nif (!embArray) throw new Error(\"No embeddings found.\");\n\nconst embedding_str = '[' + embArray.join(',') + ']'; // valid pgvector format\n\nreturn [{\n  json: {\n    embedding_str,\n    vector: embArray,  // keep array form too (optional)\n    chunk_text,\n    chunk_index\n  }\n}];\n\n\n\n\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -144,
+        16
+      ],
+      "id": "a0744114-b1f4-4f74-a337-7939cac56c9f",
+      "name": "FormatEmbedding"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -272,
+        272
+      ],
+      "id": "39fa6b20-8cfe-47a7-b934-84ee99bb480e",
+      "name": "MergeChunkEmbed"
+    },
+    {
+      "parameters": {
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "documents",
+          "mode": "list",
+          "cachedResultName": "documents"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "title": "={{ $json[\"doc\"][\"title\"] }}",
+            "source": "={{ $json[\"doc\"][\"source\"] }}"
+          },
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "source",
+              "displayName": "source",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "mime_type",
+              "displayName": "mime_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "uploaded_by",
+              "displayName": "uploaded_by",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -352,
+        -208
+      ],
+      "id": "c3ea9184-753a-495d-9667-318490f80c8a",
+      "name": "InsertDoc",
+      "credentials": {
+        "postgres": {
+          "id": "7oRoQP7HlwXMfH8M",
+          "name": "Postgres account 4"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        96,
+        -32
+      ],
+      "id": "27264f3f-09da-4718-8751-442f52349b8b",
+      "name": "MergeDocAndEmbedding"
+    },
+    {
+      "parameters": {
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "document_chunks",
+          "mode": "list",
+          "cachedResultName": "document_chunks"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "chunk_text": "={{$json[\"chunk_text\"]}}",
+            "document_id": "={{$json[\"id\"]}}",
+            "chunk_index": "={{$json[\"chunk_index\"]}}"
+          },
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "document_id",
+              "displayName": "document_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "chunk_index",
+              "displayName": "chunk_index",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "chunk_text",
+              "displayName": "chunk_text",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        272,
+        16
+      ],
+      "id": "4b8f3e13-cccb-4f91-8688-4b7b79a296ec",
+      "name": "InsertChunk",
+      "credentials": {
+        "postgres": {
+          "id": "7oRoQP7HlwXMfH8M",
+          "name": "Postgres account 4"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        368,
+        368
+      ],
+      "id": "31599182-f2d7-41b3-9d34-4e15ed34e0d4",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "embeddings",
+          "mode": "list",
+          "cachedResultName": "embeddings"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "chunk_id": "={{$json[\"id\"]}}",
+            "vector": "={{$json[\"embedding_str\"]}}"
+          },
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "chunk_id",
+              "displayName": "chunk_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "vector",
+              "displayName": "vector",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        496,
+        64
+      ],
+      "id": "c408ceca-f540-4441-abb0-df5e9c2012df",
+      "name": "InsertEmbedding",
+      "credentials": {
+        "postgres": {
+          "id": "7oRoQP7HlwXMfH8M",
+          "name": "Postgres account 4"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Chunker",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chunker": {
+      "main": [
+        [
+          {
+            "node": "FilterChunks",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "FilterDocMeta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embed": {
+      "main": [
+        [
+          {
+            "node": "MergeChunkEmbed",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "FilterChunks": {
+      "main": [
+        [
+          {
+            "node": "Embed",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "MergeChunkEmbed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FilterDocMeta": {
+      "main": [
+        [
+          {
+            "node": "InsertDoc",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MergeChunkEmbed": {
+      "main": [
+        [
+          {
+            "node": "FormatEmbedding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FormatEmbedding": {
+      "main": [
+        [
+          {
+            "node": "MergeDocAndEmbedding",
+            "type": "main",
+            "index": 1
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "InsertDoc": {
+      "main": [
+        [
+          {
+            "node": "MergeDocAndEmbedding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MergeDocAndEmbedding": {
+      "main": [
+        [
+          {
+            "node": "InsertChunk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsertChunk": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "InsertEmbedding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InsertEmbedding": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "594a960a-674d-4d62-9c8d-27fc64d2ab1f",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "d1643c658e20e85319abf1d5d7ee7472221f231bd544998e713871178ff90d52"
+  },
+  "id": "LMSHPJzn49nlUeVh",
+  "tags": []
+}

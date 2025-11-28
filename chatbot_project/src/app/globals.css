@@ -1,0 +1,11 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #2563eb;
+  --color-secondary: #9333ea;
+  --color-accent: #f59e0b;
+}
+
+body {
+  @apply bg-gradient-to-br from-blue-50 to-purple-50 text-gray-900;
+}

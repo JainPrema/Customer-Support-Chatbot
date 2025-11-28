@@ -1,0 +1,57 @@
+
+services:
+  postgres:
+    image: ankane/pgvector
+    container_name: postgres
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: postgres   # <- matches n8n
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./db_data:/var/lib/postgresql/data
+
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    environment:
+      - N8N_HOST=n8n.localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - N8N_COOKIE_SECURE=false
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=postgres   # <- must match Postgres DB
+      - DB_POSTGRESDB_USER=postgres       # <- must match Postgres user
+      - DB_POSTGRESDB_PASSWORD=password   # <- must match Postgres password
+      - N8N_BASIC_AUTH_ACTIVE=false       # optional
+    ports:
+      - "5678:5678"
+    depends_on:
+      - postgres
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+
+  frontend:
+    build: ./frontend
+    container_name: frontend
+    environment:
+      - PORT=3000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - postgres
+      - ollama
+      - n8n
+
+volumes:
+  ollama: {}

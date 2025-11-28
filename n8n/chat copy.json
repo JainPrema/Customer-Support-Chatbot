@@ -1,0 +1,649 @@
+{
+  "name": "chat copy",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "chat/message_new",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -2512,
+        192
+      ],
+      "id": "f30d96da-3867-4a00-8adf-89cd1a788893",
+      "name": "ChatWebhook",
+      "alwaysOutputData": true,
+      "webhookId": "45f3fdd1-806e-4843-9fb1-960ce2ce6083"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ollama:11434/api/embed",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"nomic-embed-text:latest\",\n  \"input\":{{ JSON.stringify($json.query  || '') }}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1792,
+        192
+      ],
+      "id": "706c80b4-166b-4181-8579-87cddba93a27",
+      "name": "EmbedQuery"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT DISTINCT ON (c.chunk_text)\n  c.chunk_text,\n  1 - (e.vector <=> '{{ \"[\" + $json.embeddings.join(\",\") + \"]\" }}'::vector) AS confidence\nFROM document_chunks c\nJOIN embeddings e ON e.chunk_id = c.id\nORDER BY c.chunk_text, (e.vector <#> '{{ \"[\" + $json.embeddings.join(\",\") + \"]\" }}'::vector)\nLIMIT 5;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -1600,
+        192
+      ],
+      "id": "8a5e2373-deff-4aa0-8cdb-e412343cbf61",
+      "name": "RetrieveChunks",
+      "credentials": {
+        "postgres": {
+          "id": "7oRoQP7HlwXMfH8M",
+          "name": "Postgres account 4"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const query = $json.query || $('ChatWebhook').first().json.body.query || '';\nconst combinedText = items.map(i => (i.json.chunk_text || '').replace(/[#*_>`-]+/g, '').replace(/\\r?\\n+/g, ' ').replace(/\\s{2,}/g, ' ').trim()).filter(Boolean).join('\\n---\\n');\nconst confidence = Math.max(...items.map(i => parseFloat(i.json.confidence || 0)));\nreturn [{ json: { query, context: combinedText, confidence: confidence || 0 } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1424,
+        192
+      ],
+      "id": "720526cb-5ae5-4193-8a82-c3b8fa3b70ff",
+      "name": "CombineContext"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ollama:11434/api/generate",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  model: \"llama3.1:latest\",\n  prompt: `You are a helpful assistant. Use the provided context to answer the question clearly and concisely.\\n\\nContext:\\n${$json.context}\\n\\nQuestion: ${$('ChatWebhook').first().json.body.query}\\n\\nAnswer:`,\n  stream: false\n} }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          },
+          "pagination": {
+            "pagination": {
+              "paginationMode": "off"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1232,
+        192
+      ],
+      "id": "ccdb86b7-23dc-4c54-829f-a81cb0e1daed",
+      "name": "GenerateAnswer"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"query\": \"{{ $('ChatWebhook').first().json.body.query || '' }}\",\n  \"answer\": \"{{ ( $('LogMessage').item.json.response || $json.answer || 'No answer generated').replace(/\\n/g, ' ').replace(/\"/g, '\\\\\"') }}\",\n  \"confidence\": {{ $('CombineContext').first().json.confidence || 0 }},\n\"session_id\": \"{{$('GenerateSessionID').first().json.session_id}}\"\n}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        -272,
+        272
+      ],
+      "id": "d4454e6c-9468-449a-80f4-894dbea3fce8",
+      "name": "RespondToUser1"
+    },
+    {
+      "parameters": {
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "message_logs",
+          "mode": "list",
+          "cachedResultName": "message_logs"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "query": "={{ $('ChatWebhook').first().json.body.query }}\n\n",
+            "response": "={{ $json.answer }}",
+            "confidence": "={{ $('CombineContext').item.json.confidence }}"
+          },
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "query",
+              "displayName": "query",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "response",
+              "displayName": "response",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "confidence",
+              "displayName": "confidence",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -640,
+        272
+      ],
+      "id": "9c9a0f0c-4a59-43b8-a69d-9cc150fb8f46",
+      "name": "LogMessage",
+      "credentials": {
+        "postgres": {
+          "id": "7oRoQP7HlwXMfH8M",
+          "name": "Postgres account 4"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "let data = $json.data;\nif (typeof data === 'string') {\n  try { data = JSON.parse(data); } catch (e) { return [{ json: { error: 'Failed to parse Ollama response', raw: data } }]; }\n}\nlet answer = (data.response || '').replace(/\\n/g, ' ');\nreturn [{ json: { answer, model: data.model, timestamp: data.created_at } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1056,
+        192
+      ],
+      "id": "c0a91e75-1241-4936-88c5-ab0d7257242f",
+      "name": "ParseOllamaResponse2"
+    },
+    {
+      "parameters": {
+        "fromEmail": "jain.prema19@gmail.com",
+        "toEmail": "jain.prema19@gmail.com",
+        "subject": "⚠️ Chatbot Escalation - Low Confidence Response",
+        "emailFormat": "text",
+        "text": "=\nUser query: {{ $('ChatWebhook').first().json.body.query }}\nConfidence: {{ $('CombineContext').item.json.confidence }}\nLLM Answer: {{ $json.answer }}\n\nAction Required: Please review and provide manual assistance.",
+        "options": {}
+      },
+      "name": "EscalateEmail1",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        -576,
+        80
+      ],
+      "id": "c8972391-7c56-480f-b157-2e07fc45c95d",
+      "webhookId": "54654a4f-c05e-4a65-b0db-7df1492a9012",
+      "credentials": {
+        "smtp": {
+          "id": "i9jhHE7lCy3miWR5",
+          "name": "SMTP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $('CombineContext').first().json.confidence }}",
+              "rightValue": 0.6,
+              "operator": {
+                "type": "number",
+                "operation": "lt"
+              },
+              "id": "f0ef3e94-a8ad-4259-b849-5552581800cb"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Confidence Filter2",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -864,
+        192
+      ],
+      "id": "05d22741-4049-470a-9142-809466cb1d99"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { startTime: Date.now(), query: $('GenerateSessionID').first().json.body.query} }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1952,
+        192
+      ],
+      "id": "7f6e011f-4297-4c78-a9c9-4c0b8653476b",
+      "name": "StartTimer"
+    },
+    {
+      "parameters": {
+        "jsCode": "const end = Date.now();\nconst start = $('StartTimer').first().json.startTime;\n\n// Get session_id from GenerateSessionID node\nconst sessionId = $('GenerateSessionID').first().json.session_id;\n\nconst latencyMs = end - start;\nconst chunkCount = $('RetrieveChunks').all().length;\nconst confidence = $('CombineContext').first().json.confidence || 0;\n\nreturn [{\n  json: {\n    session_id: sessionId,      // <-- added session_id\n    latency_ms: latencyMs,\n    chunk_count: chunkCount,\n    confidence,\n    timestamp: new Date().toISOString()\n  }\n}];\n\n\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -112,
+        272
+      ],
+      "id": "6c886255-c514-41a4-84a2-13f2c7392e32",
+      "name": "MetricsData"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate simple UUID v4 without external modules\nfunction generateUUID() {\n  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {\n    const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);\n    return v.toString(16);\n  });\n}\n\n// Use existing session_id if present, otherwise generate new\nconst session_id = $json.id || generateUUID();\n\n// Add start_time for metrics/logging\nreturn [{\n  json: {\n    ...$json,\n    session_id,\n    start_time: new Date().toISOString()\n  }\n}];\n\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2336,
+        192
+      ],
+      "id": "1b78e9b3-9c5f-47ef-835d-4454e04d6837",
+      "name": "GenerateSessionID"
+    },
+    {
+      "parameters": {
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "chat_metrics",
+          "mode": "list",
+          "cachedResultName": "chat_metrics"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "latency_ms": "={{ $json.latency_ms }}",
+            "chunk_count": "={{ $json.chunk_count }}",
+            "confidence": "={{ $json.confidence }}",
+            "session_id": "={{ $json.session_id }}"
+          },
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "latency_ms",
+              "displayName": "latency_ms",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "chunk_count",
+              "displayName": "chunk_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "confidence",
+              "displayName": "confidence",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "session_id",
+              "displayName": "session_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        96,
+        272
+      ],
+      "id": "1792a780-aab2-4c3a-b8db-58b17a994ec5",
+      "name": "InsertMetrics",
+      "credentials": {
+        "postgres": {
+          "id": "7oRoQP7HlwXMfH8M",
+          "name": "Postgres account 4"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nUPDATE sessions\nSET last_activity_at = NOW()\nWHERE id = '{{ $json.session_id || $json.id }}';\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -432,
+        272
+      ],
+      "id": "29a00447-678a-4d0d-b9fc-00e52c21f14f",
+      "name": "UpdateLastActivity",
+      "credentials": {
+        "postgres": {
+          "id": "7oRoQP7HlwXMfH8M",
+          "name": "Postgres account 4"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO sessions (id, status, created_at, last_activity_at, ttl)\nVALUES ('{{$json.session_id}}', 'active', NOW(), NOW(), INTERVAL '24 HOURS')\nON CONFLICT (id) DO NOTHING;\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -2128,
+        192
+      ],
+      "id": "813a669a-54ba-4d6d-89c7-8ba45c459d02",
+      "name": "Execute a SQL query",
+      "credentials": {
+        "postgres": {
+          "id": "7oRoQP7HlwXMfH8M",
+          "name": "Postgres account 4"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "ChatWebhook": {
+      "main": [
+        [
+          {
+            "node": "GenerateSessionID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "EmbedQuery": {
+      "main": [
+        [
+          {
+            "node": "RetrieveChunks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RetrieveChunks": {
+      "main": [
+        [
+          {
+            "node": "CombineContext",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CombineContext": {
+      "main": [
+        [
+          {
+            "node": "GenerateAnswer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GenerateAnswer": {
+      "main": [
+        [
+          {
+            "node": "ParseOllamaResponse2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LogMessage": {
+      "main": [
+        [
+          {
+            "node": "UpdateLastActivity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ParseOllamaResponse2": {
+      "main": [
+        [
+          {
+            "node": "Confidence Filter2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confidence Filter2": {
+      "main": [
+        [
+          {
+            "node": "EscalateEmail1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "LogMessage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "StartTimer": {
+      "main": [
+        [
+          {
+            "node": "EmbedQuery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RespondToUser1": {
+      "main": [
+        [
+          {
+            "node": "MetricsData",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MetricsData": {
+      "main": [
+        [
+          {
+            "node": "InsertMetrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GenerateSessionID": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "UpdateLastActivity": {
+      "main": [
+        [
+          {
+            "node": "RespondToUser1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a SQL query": {
+      "main": [
+        [
+          {
+            "node": "StartTimer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "bcda65ec-8829-4bcb-abba-6d1d4afc8a96",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "d1643c658e20e85319abf1d5d7ee7472221f231bd544998e713871178ff90d52"
+  },
+  "id": "Zu4izpcOlZdM3vK4",
+  "tags": []
+}
